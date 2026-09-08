@@ -26,24 +26,33 @@ class LLM2VecEncoder:
 
         cache_dir = os.environ.get("HUGGINGFACE_CACHE_DIR")
 
-        if "TEXT_ENCODERS_DIR" in os.environ:
-            base_model_name_or_path = os.path.join(os.environ["TEXT_ENCODERS_DIR"], base_model_name_or_path)
-            peft_model_name_or_path = os.path.join(os.environ["TEXT_ENCODERS_DIR"], peft_model_name_or_path)
-
-        self.model = LLM2Vec.from_pretrained(
-            base_model_name_or_path=base_model_name_or_path,
-            peft_model_name_or_path=peft_model_name_or_path,
-            torch_dtype=torch_dtype,
-            cache_dir=cache_dir,
-        )
-
         env_device = os.environ.get("TEXT_ENCODER_DEVICE")
         if env_device:
             device = env_device
         if device == "auto":
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self._device = device
-        if device is not None:
+
+        if "TEXT_ENCODERS_DIR" in os.environ:
+            base_model_name_or_path = os.path.join(os.environ["TEXT_ENCODERS_DIR"], base_model_name_or_path)
+            peft_model_name_or_path = os.path.join(os.environ["TEXT_ENCODERS_DIR"], peft_model_name_or_path)
+
+        load_kwargs = {
+            "torch_dtype": torch_dtype,
+            "cache_dir": cache_dir,
+        }
+        # Loading a multi-billion parameter model on CPU before moving it to CUDA
+        # can exhaust host RAM. Dispatch CUDA weights directly from safetensors.
+        if str(device).startswith("cuda"):
+            load_kwargs.update(device_map=str(device), low_cpu_mem_usage=True)
+
+        self.model = LLM2Vec.from_pretrained(
+            base_model_name_or_path=base_model_name_or_path,
+            peft_model_name_or_path=peft_model_name_or_path,
+            **load_kwargs,
+        )
+
+        if device is not None and not hasattr(self.model.model, "hf_device_map"):
             self.model = self.model.to(device)
 
         self.model.eval()

@@ -1272,6 +1272,10 @@ def create_gui(
                     "Download",
                     hint="Download the current motion (format + name above).",
                 )
+                gui_download_to_server_button = client.gui.add_button(
+                    "Download to Server",
+                    hint="Save the current motion to server path /home/spirit-ai/data/source_amass",
+                )
 
             def _download_bytes_to_browser(
                 event_client: viser.ClientHandle,
@@ -1609,6 +1613,59 @@ def create_gui(
                     traceback.print_exc()
                     event_client.add_notification(
                         title="Failed to download motion!",
+                        body=str(e),
+                        auto_close_seconds=10.0,
+                        color="red",
+                    )
+
+            @gui_download_to_server_button.on_click
+            def _(event: viser.GuiEvent) -> None:
+                event_client = event.client
+                session = get_active_session(event_client)
+                if session is None:
+                    return
+                motion = _get_primary_motion(session)
+                try:
+                    fmt = str(gui_download_format_dropdown.value).upper()
+                    raw_name = str(gui_download_name_text.value)
+
+                    if fmt == "BVH":
+                        filename = _coerce_download_filename(raw_name, ext=".bvh")
+                        payload = motion_to_bvh_bytes(
+                            motion.joints_local_rot,
+                            motion.joints_pos[:, session.skeleton.root_idx, :],
+                            skeleton=session.skeleton,
+                            fps=float(session.model_fps),
+                            standard_tpose=bool(gui_download_bvh_standard_tpose_checkbox.value),
+                        )
+                    elif fmt == "CSV":
+                        filename = _coerce_download_filename(raw_name, ext=".csv")
+                        payload = _motion_to_csv_bytes(motion, session)
+                    elif fmt == "AMASS NPZ":
+                        filename = _coerce_download_filename(raw_name, ext=".npz")
+                        payload = _motion_to_amass_npz_bytes(motion, session)
+                    else:
+                        filename = _coerce_download_filename(raw_name, ext=".npz")
+                        payload = _motion_to_npz_bytes(motion)
+
+                    server_dir = "/home/spirit-ai/data/source_amass"
+                    os.makedirs(server_dir, exist_ok=True)
+                    server_path = os.path.join(server_dir, filename)
+                    with open(server_path, "wb") as f:
+                        f.write(payload)
+
+                    event_client.add_notification(
+                        title="Saved to server",
+                        body=f"Motion saved to {server_path}",
+                        auto_close_seconds=5.0,
+                        color="green",
+                    )
+                except Exception as e:
+                    import traceback
+
+                    traceback.print_exc()
+                    event_client.add_notification(
+                        title="Failed to save motion to server!",
                         body=str(e),
                         auto_close_seconds=10.0,
                         color="red",

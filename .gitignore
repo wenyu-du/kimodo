@@ -16,6 +16,7 @@ datasets
 .Python
 build/
 develop-eggs/
+build_motion_correction/
 dist/
 downloads/
 eggs/

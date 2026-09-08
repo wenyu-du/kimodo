@@ -44,7 +44,7 @@ from typing import Dict, List, Optional, Union
 import numpy as np
 import torch
 import torch.multiprocessing as mp
-from peft import PeftModel
+from peft import PeftConfig, PeftModel
 from torch import Tensor, device, nn
 from tqdm.autonotebook import tqdm, trange
 from transformers import (
@@ -124,28 +124,44 @@ class LLM2Vec(nn.Module):
         keys = ["pooling_mode", "max_length", "doc_max_length", "skip_instruction"]
         encoder_args = {key: kwargs.pop(key, None) for key in keys if kwargs.get(key) is not None}
 
-        tokenizer = AutoTokenizer.from_pretrained(base_model_name_or_path)
+        # LLM2Vec publishes the MNTP stage as a PEFT adapter directory. Passing
+        # that directory straight to Transformers triggers its automatic adapter
+        # loading, which does not work with our bidirectional model classes on
+        # recent Transformers releases. Resolve the underlying base model and
+        # load the adapter explicitly below instead.
+        base_adapter_path = None
+        try:
+            base_adapter_config = PeftConfig.from_pretrained(
+                base_model_name_or_path,
+                cache_dir=kwargs.get("cache_dir"),
+            )
+        except (FileNotFoundError, OSError, ValueError):
+            model_name_or_path = base_model_name_or_path
+        else:
+            base_adapter_path = base_model_name_or_path
+            model_name_or_path = base_adapter_config.base_model_name_or_path
+
+        tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, cache_dir=kwargs.get("cache_dir"))
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.padding_side = "left"
 
-        config = AutoConfig.from_pretrained(base_model_name_or_path)
+        config = AutoConfig.from_pretrained(model_name_or_path, cache_dir=kwargs.get("cache_dir"))
         config_class_name = config.__class__.__name__
 
         model_class = cls._get_model_class(config_class_name, enable_bidirectional=enable_bidirectional)
 
-        model = model_class.from_pretrained(base_model_name_or_path, **kwargs)
+        model = model_class.from_pretrained(model_name_or_path, **kwargs)
 
-        if os.path.isdir(base_model_name_or_path) and os.path.exists(f"{base_model_name_or_path}/config.json"):
-            with open(f"{base_model_name_or_path}/config.json", "r") as fIn:
+        if os.path.isdir(model_name_or_path) and os.path.exists(f"{model_name_or_path}/config.json"):
+            with open(f"{model_name_or_path}/config.json", "r") as fIn:
                 config_dict = json.load(fIn)
             config = PretrainedConfig.from_dict(config_dict)
             model.config._name_or_path = config._name_or_path
 
-        # For special case where config.json and adapter weights are in the same directory
-        if hasattr(model, "peft_config"):
+        if base_adapter_path is not None:
             model = PeftModel.from_pretrained(
                 model,
-                base_model_name_or_path,
+                base_adapter_path,
             )
             model = model.merge_and_unload()
 
